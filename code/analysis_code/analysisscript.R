@@ -8,62 +8,73 @@
 library(ggplot2) #for plotting
 library(broom) #for cleaning up output from lm()
 library(here) #for data loading/saving
+library(broom) #glance function
+library(tidyverse) #tidyr: tidy output
+library(tidymodels) #linear and logistic reg
+library(broom.mixed)
+library(dotwhisker)
 
-#path to data
-#note the use of the here() package and not absolute paths
+#path to data:: note the use of the here() package and not absolute paths
 data_location <- here::here("data","processed_data","processeddata.rds")
 
-#load data. 
+#load clean data. 
 mydata <- readRDS(data_location)
 
-######################################
-#Data exploration/description
-######################################
-#I'm using basic R commands here.
-#Lots of good packages exist to do more.
-#For instance check out the tableone or skimr packages
+#RunnyNose is our main predictor of interest
 
-#summarize data 
-mysummary = summary(mydata)
+#Fit a linear model to the continuous outcome using only the main predictor of interest.
+lm_mod <- linear_reg() %>%
+  set_engine("lm")
 
-#look at summary
-print(mysummary)
+lm_fit <- lm_mod %>%
+  fit(BodyTemp ~ RunnyNose, data = mydata)
 
-#do the same, but with a bit of trickery to get things into the 
-#shape of a data frame (for easier saving/showing in manuscript)
-summary_df = data.frame(do.call(cbind, lapply(mydata, summary)))
+lm_fit_summary <- tidy(lm_fit) #tidy output
+lm_fit_summary
 
-#save data frame table to file for later use in manuscript
-summarytable_file = here("results", "summarytable.rds")
-saveRDS(summary_df, file = summarytable_file)
+#Fit another linear model to the continuous outcome using all predictors of interest.
+mydata_subset <- mydata %>%
+  select(c(BodyTemp, SwollenLymphNodes, NasalCongestion, Sneeze, Fatigue, 
+           SubjectiveFever, Pharyngitis))  ##All predictors of interest
 
+lm_fit_all <- lm_mod %>%
+  fit(BodyTemp ~ ., data = mydata_subset)
 
-#make a scatterplot of data
-#we also add a linear regression line to it
-p1 <- mydata %>% ggplot(aes(x=Height, y=Weight)) + geom_point() + geom_smooth(method='lm')
+lm_fit_all_summary <- tidy(lm_fit_all) #tidy output
+lm_fit_all_summary
 
-#look at figure
-plot(p1)
+#Compare the model results for the model with just the main predictor and all predictors.
+glance(lm_fit) #adjusted r-squared: 0.0110; AIC: 2329, BIC: 2343
+glance(lm_fit_all) #adjusted r-squared: 0.0862; AIC: 2277, BIC: 2313
+#Adding additional predictors only slightly improves the model fit: 
+  #slightly higher r-squared, but still vary low
+  #slightly lower AIC and BIC
 
-#save figure
-figure_file = here("results","resultfigure.png")
-ggsave(filename = figure_file, plot=p1) 
+#Fit a logistic model to the categorical outcome using only the main predictor of interest.
+logistic_mod <- logistic_reg() %>%
+  set_engine("glm")
 
-######################################
-#Data fitting/statistical analysis
-######################################
+log_fit <- logistic_mod %>%
+  fit(Nausea ~ RunnyNose, data = mydata)
 
-# fit linear model
-lmfit <- lm(Weight ~ Height, mydata)  
+log_fit_summary <- tidy(log_fit)
+log_fit_summary
 
-# place results from fit into a data frame with the tidy function
-lmtable <- broom::tidy(lmfit)
+#Fit another logistic model to the categorical outcome using all (important) predictors of interest.
+mydata_subset_nausea <- mydata %>%
+  select(c(ChillsSweats, Fatigue, SubjectiveFever, Headache, 
+           Weakness, Myalgia, AbPain, Diarrhea, Vomit, BodyTemp, Nausea))
+         
+log_fit_all <- logistic_mod %>%
+  fit(Nausea ~ ., data = mydata_subset_nausea)
 
-#look at fit results
-print(lmtable)
+log_fit_all_summary <- tidy(log_fit_all)
+log_fit_all_summary
 
-# save fit results table  
-table_file = here("results", "resulttable.rds")
-saveRDS(lmtable, file = table_file)
+#Compare the model results for the categorical model with just the main predictor and all predictors.
+glance(log_fit) #deviance: 945
+glance(log_fit_all) #deviance: 783
 
-  
+#the smaller the deviance, the better the fit, so adding additional predictors improves the model fit
+#also, the AIC and BIC are lower
+
