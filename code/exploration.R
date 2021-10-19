@@ -19,7 +19,7 @@ data_location <- here::here("data","processed_data","processeddata.rds")
 processed_data <- readRDS(data_location)
 
 #take a look at the data
-dplyr::glimpse(processed_data)
+glimpse(processed_data)
 
 #main continuous outcome of interest is Body temperature
 #main categorical outcome is Nausea
