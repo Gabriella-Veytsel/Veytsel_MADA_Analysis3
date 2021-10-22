@@ -57,7 +57,7 @@ processed_cat_fit <-
 processed_cat_fit %>%
   extract_fit_parsnip() %>%
   tidy()
-
+#~~~~~~~~~~~~~~~
 #Model Evaluaton:
 #Look at predictions, ROC and ROC-AUC for my data
 #ROC-AUC is how good the model is at distinguishing 
@@ -82,7 +82,7 @@ processed_cat_aug %>%
 processed_cat_aug %>%
   roc_auc(truth = Nausea, .pred_No) #0.724 - model is useful
 #Was it correct to use .pred_No instead of .pred_Yes
-
+#!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 #Out of curiousity, apply training data instead
 #Use the trained workflow to predict with the training data
 #Returns predicted class
@@ -158,3 +158,115 @@ processed_cat_main_aug_train %>%
 #Estimate the area under the curve
 processed_cat_main_aug_train %>%
   roc_auc(truth = Nausea, .pred_No) #0.519 - has better performance, as expected
+
+####################################################################
+#Amanda Glatter
+
+#Continuous outcome of interest = BodyTemp
+#Recipe () has two arguments: a formula and the data
+bodytemp_recipe <- recipe(BodyTemp ~ ., data = train_data)
+
+#Build a model specification using the parsnip package
+linear_model <- linear_reg() %>%
+  set_engine("lm")
+
+#Model workflow pairs a model and recipe together
+cont_workflow <- 
+  workflow() %>%
+  add_model(linear_model) %>%
+  add_recipe(bodytemp_recipe)
+
+cont_workflow
+
+cont_fit <-
+  cont_workflow %>%
+  fit(data = train_data)
+
+#Extract the fitted model object and use tidy() to get a tidy tibble 
+#of model coefficients
+cont_fit %>%
+  extract_fit_parsnip() %>%
+  tidy()
+
+#We'll now start to evaluate the model using RMSE.
+
+#We use RMSE on BodyTemp against all predictors and use the train data.
+#Make predictions.
+
+predict(cont_fit, train_data)
+
+#Returns predicted class probabiliies
+cont_aug_train <- augment(cont_fit, train_data)
+cont_aug_train
+
+#RMSE
+train_rmse <- cont_aug_train %>%
+  rmse(truth = BodyTemp, .pred)
+
+train_rmse #The value is 1.11.
+
+#Now we repeat this on the test data.
+#We use RMSE on BodyTemp against all predictors and use the test data.
+#Make predictions.
+
+predict(cont_fit, test_data)
+
+#Returns predicted class probabiliies
+cont_aug_test <- augment(cont_fit, test_data)
+cont_aug_test
+
+#RMSE
+test_rmse <- cont_aug_test %>%
+  rmse(truth = BodyTemp, .pred)
+
+test_rmse #The value is 1.15.
+
+#Now we have to make a recipe for Body Temp and Runny nose.
+bodytemp_runnynose_recipe <- recipe(BodyTemp ~ RunnyNose, data = train_data)
+
+#Model workflow pairs a model and recipe together (runny nose and body temp)
+cont_workflow2 <- 
+  workflow() %>%
+  add_model(linear_model) %>%
+  add_recipe(bodytemp_runnynose_recipe)
+
+cont_fit2 <-
+  cont_workflow2 %>%
+  fit(data = train_data)
+
+#Extract the fitted model object and use tidy() to get a tidy tibble 
+#of model coefficients
+cont_fit2 %>%
+  extract_fit_parsnip() %>%
+  tidy()
+
+#make predictions
+predict(cont_fit2, train_data)
+
+#Returns predicted class probabiliies
+cont_aug_train2 <- augment(cont_fit2, train_data)
+cont_aug_train2
+
+#We use RMSE on BodyTemp with predictor RunnyNose using test data.
+
+#RMSE
+train_rmse2 <- cont_aug_train2 %>%
+  rmse(truth = BodyTemp, .pred)
+
+train_rmse2 #The value is 1.21.
+
+#Now we repeat this on the test data.
+#We use RMSE on BodyTemp against Runnt nose and use the test data.
+#Make predictions.
+
+predict(cont_fit2, test_data)
+
+#Returns predicted class probabiliies
+cont_aug_test2 <- augment(cont_fit2, test_data)
+cont_aug_test2
+
+#RMSE
+test_rmse2 <- cont_aug_test2 %>%
+  rmse(truth = BodyTemp, .pred)
+
+test_rmse2 #The value is 1.13.
