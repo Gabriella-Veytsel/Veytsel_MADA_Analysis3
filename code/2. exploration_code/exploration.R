@@ -1,16 +1,11 @@
-#Exploration 
+#Exploration script
+#******************
 
 #load packages
 library(here)
 library(tidyverse)
 library(ggplot2)
 library(table1)
-
-#Data Dictionary
-#BodyTemp: not in data dictionary
-#SwollenLymphNodes: Did the patient report swollen/tender lymph nodes (adenopathy)?
-#Fatigue: Did the patient report fatigue?
-#Nausea: Did the patient report nausea as a symptom?
 
 #path to data: note the use of the here() package and not absolute paths
 data_location <- here::here("data","processed_data","processeddata.rds")

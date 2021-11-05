@@ -1,0 +1,613 @@
+#Gabriella Veytsel
+
+#Analysis script
+#***************
+  #this script loads the processed, cleaned data, does a simple analysis
+  #and saves the results to the results folder
+
+#load needed packages. make sure they are installed.
+library(ggplot2) #for plotting
+library(broom) #for cleaning up output from lm()
+library(here) #for data loading/saving
+library(tidyverse) #tidyr: tidy output
+library(tidymodels) #linear and logistic reg
+library(broom.mixed)
+library(dotwhisker)
+library(skimr) #for variable summaries
+library(rsample) #for splitting data
+library(yardstick) #roc_curve() and roc_auc()
+library(rpart.plot) #for visualizing a decision tree
+library(vip) #for variable importance plots
+library(ranger)
+library(glmnet)
+
+#path to data:: note the use of the here() package and not absolute paths
+data_location <- here::here("data","processed_data","processeddata.rds")
+
+#load clean data. 
+mydata <- readRDS(data_location)
+
+#RunnyNose is our main predictor of interest
+
+#Fit a linear model to the continuous outcome using only the main predictor of interest.
+lm_mod <- linear_reg() %>%
+  set_engine("lm")
+
+lm_fit <- lm_mod %>%
+  fit(BodyTemp ~ RunnyNose, data = mydata)
+
+lm_fit_summary <- tidy(lm_fit) #tidy output
+lm_fit_summary
+
+#Fit another linear model to the continuous outcome using all predictors of interest.
+mydata_subset <- mydata %>%
+  select(c(BodyTemp, SwollenLymphNodes, NasalCongestion, Sneeze, Fatigue, 
+           SubjectiveFever, Pharyngitis))  ##All predictors of interest
+
+lm_fit_all <- lm_mod %>%
+  fit(BodyTemp ~ ., data = mydata_subset)
+
+lm_fit_all_summary <- tidy(lm_fit_all) #tidy output
+lm_fit_all_summary
+
+#Compare the model results for the model with just the main predictor and all predictors.
+glance(lm_fit) #adjusted r-squared: 0.0110; AIC: 2329, BIC: 2343
+glance(lm_fit_all) #adjusted r-squared: 0.0862; AIC: 2277, BIC: 2313
+#Adding additional predictors only slightly improves the model fit: 
+  #slightly higher r-squared, but still vary low
+  #slightly lower AIC and BIC
+
+#Fit a logistic model to the categorical outcome using only the main predictor of interest.
+logistic_mod <- logistic_reg() %>%
+  set_engine("glm")
+
+log_fit <- logistic_mod %>%
+  fit(Nausea ~ RunnyNose, data = mydata)
+
+log_fit_summary <- tidy(log_fit)
+log_fit_summary
+
+#Fit another logistic model to the categorical outcome using all (important) predictors of interest.
+mydata_subset_nausea <- mydata %>%
+  select(c(ChillsSweats, Fatigue, SubjectiveFever, Headache, 
+           Weakness, Myalgia, AbPain, Diarrhea, Vomit, BodyTemp, Nausea))
+         
+log_fit_all <- logistic_mod %>%
+  fit(Nausea ~ ., data = mydata_subset_nausea)
+
+log_fit_all_summary <- tidy(log_fit_all)
+log_fit_all_summary
+
+#Compare the model results for the categorical model with just the main predictor and all predictors.
+glance(log_fit) #deviance: 945
+glance(log_fit_all) #deviance: 783
+
+#the smaller the deviance, the better the fit, so adding additional predictors improves the model fit
+#also, the AIC and BIC are lower
+
+#******************************************************************************************
+#****************************************Exercise 9****************************************
+#******************************************************************************************
+
+#It is important that our outcome variable for training a logistic regression 
+#is a factor
+
+#Randomly split data into training set and testing set
+#*****************************************************
+
+#The training data will be used to fit the model
+#The testing set will be used to measure model performance
+
+#Fix the random numbers by setting a seed
+#this enables the analysis to be reproducible when random #s are used
+set.seed(222) 
+#Put 3/4 of the data into the training set
+data_split <- initial_split(processed_data, prop = 3/4)
+#Create data frames for the two sets
+train_data <- training(data_split)
+test_data <- testing(data_split)
+
+#Fit categorical outcome of interest to all predictors
+#*****************************************************
+
+#Categorical outcome of interest = Nausea
+#Recipe () has two arguments: a formula and the data
+processed_cat_rec <- recipe(Nausea ~ ., data = train_data)
+
+#Build a model specification using the parsnip package
+logistic_mod <- logistic_reg() %>%
+  set_engine("glm")
+
+#Model workflow pairs a model and recipe together
+processed_cat_workflow <- 
+  workflow() %>%
+  add_model(logistic_mod) %>%
+  add_recipe(processed_cat_rec)
+
+processed_cat_workflow
+
+processed_cat_fit <-
+  processed_cat_workflow %>%
+  fit(data = train_data)
+
+#Extract the fitted model object and use tidy() to get a tidy tibble 
+#of model coefficients
+processed_cat_fit %>%
+  extract_fit_parsnip() %>%
+  tidy()
+
+#Model Evaluaton:
+#Look at predictions, ROC and ROC-AUC for my data
+#ROC-AUC is how good the model is at distinguishing 
+#between patients with nausea and patients without nausea
+#************************************************
+
+#Use the trained workflow to predict with the test data
+#Returns predicted class
+predict(processed_cat_fit, test_data)
+#Can these warnings be ignored?
+
+#Returns predicted class probabiliies
+processed_cat_aug <- augment(processed_cat_fit, test_data)
+processed_cat_aug
+
+#Create the ROC curve
+processed_cat_aug %>%
+  roc_curve(truth = Nausea, .pred_No) %>%
+  autoplot()
+
+#Estimate the area under the curve
+processed_cat_aug %>%
+  roc_auc(truth = Nausea, .pred_No) #0.724 - model is useful
+#Was it correct to use .pred_No instead of .pred_Yes
+
+#Out of curiousity, apply training data instead
+#Use the trained workflow to predict with the training data
+#Returns predicted class
+predict(processed_cat_fit, train_data)
+
+#Returns predicted class probabiliies
+processed_cat_aug_train <- augment(processed_cat_fit, train_data)
+processed_cat_aug_train
+
+#Create the ROC curve
+processed_cat_aug_train %>%
+  roc_curve(truth = Nausea, .pred_No) %>%
+  autoplot()
+
+#Estimate the area under the curve
+processed_cat_aug_train %>%
+  roc_auc(truth = Nausea, .pred_No) #0.787 - has better performance, as expected
+
+
+#Alternatiely, fit only the main predictor (RunnyNose)
+#*****************************************************
+
+#Set up a new recipe
+processed_cat_main_rec <- recipe(Nausea ~ RunnyNose, data = train_data)
+
+#Set up a new workflow
+#Model workflow pairs a model and recipe together
+processed_cat_main_workflow <- 
+  workflow() %>%
+  add_model(logistic_mod) %>%
+  add_recipe(processed_cat_main_rec) #new recipe
+
+processed_cat_main_workflow
+
+processed_cat_main_fit <-
+  processed_cat_main_workflow %>%
+  fit(data = train_data)
+
+#Evaluate performace
+#Use the trained workflow to predict with the test data
+#Returns predicted class
+predict(processed_cat_main_fit, test_data)
+#No warnings this time
+
+#Returns predicted class probabiliies
+processed_cat_main_aug <- augment(processed_cat_main_fit, test_data)
+processed_cat_main_aug
+
+#Create the ROC curve
+processed_cat_main_aug %>%
+  roc_curve(truth = Nausea, .pred_No) %>%
+  autoplot() 
+
+#Estimate the area under the curve
+processed_cat_main_aug %>%
+  roc_auc(truth = Nausea, .pred_No) #0.466 - model is no good
+#Was it correct to use .pred_No instead of .pred_Yes
+
+#Out of curiousity, apply training data instead
+#Use the trained workflow to predict with the training data
+#Returns predicted class
+predict(processed_cat_main_fit, train_data)
+
+#Returns predicted class probabiliies
+processed_cat_main_aug_train <- augment(processed_cat_main_fit, train_data)
+processed_cat_main_aug_train
+
+#Create the ROC curve
+processed_cat_main_aug_train %>%
+  roc_curve(truth = Nausea, .pred_No) %>%
+  autoplot()
+
+#Estimate the area under the curve
+processed_cat_main_aug_train %>%
+  roc_auc(truth = Nausea, .pred_No) #0.519 - has better performance, as expected
+
+#**********************************************************************************************
+#****************************************Amanda Glatter****************************************
+#**********************************************************************************************
+
+#Continuous outcome of interest = BodyTemp
+#Recipe () has two arguments: a formula and the data
+bodytemp_recipe <- recipe(BodyTemp ~ ., data = train_data)
+
+#Build a model specification using the parsnip package
+linear_model <- linear_reg() %>%
+  set_engine("lm")
+
+#Model workflow pairs a model and recipe together
+cont_workflow <- 
+  workflow() %>%
+  add_model(linear_model) %>%
+  add_recipe(bodytemp_recipe)
+
+cont_workflow
+
+cont_fit <-
+  cont_workflow %>%
+  fit(data = train_data)
+
+#Extract the fitted model object and use tidy() to get a tidy tibble 
+#of model coefficients
+cont_fit %>%
+  extract_fit_parsnip() %>%
+  tidy()
+
+#We'll now start to evaluate the model using RMSE.
+
+#We use RMSE on BodyTemp against all predictors and use the train data.
+#Make predictions.
+
+predict(cont_fit, train_data)
+
+#Returns predicted class probabiliies
+cont_aug_train <- augment(cont_fit, train_data)
+cont_aug_train
+
+#RMSE
+train_rmse <- cont_aug_train %>%
+  rmse(truth = BodyTemp, .pred)
+
+train_rmse #The value is 1.11.
+
+#Now we repeat this on the test data.
+#We use RMSE on BodyTemp against all predictors and use the test data.
+#Make predictions.
+
+predict(cont_fit, test_data)
+
+#Returns predicted class probabiliies
+cont_aug_test <- augment(cont_fit, test_data)
+cont_aug_test
+
+#RMSE
+test_rmse <- cont_aug_test %>%
+  rmse(truth = BodyTemp, .pred)
+
+test_rmse #The value is 1.15.
+
+#Now we have to make a recipe for Body Temp and Runny nose.
+bodytemp_runnynose_recipe <- recipe(BodyTemp ~ RunnyNose, data = train_data)
+
+#Model workflow pairs a model and recipe together (runny nose and body temp)
+cont_workflow2 <- 
+  workflow() %>%
+  add_model(linear_model) %>%
+  add_recipe(bodytemp_runnynose_recipe)
+
+cont_fit2 <-
+  cont_workflow2 %>%
+  fit(data = train_data)
+
+#Extract the fitted model object and use tidy() to get a tidy tibble 
+#of model coefficients
+cont_fit2 %>%
+  extract_fit_parsnip() %>%
+  tidy()
+
+#make predictions
+predict(cont_fit2, train_data)
+
+#Returns predicted class probabiliies
+cont_aug_train2 <- augment(cont_fit2, train_data)
+cont_aug_train2
+
+#We use RMSE on BodyTemp with predictor RunnyNose using test data.
+
+#RMSE
+train_rmse2 <- cont_aug_train2 %>%
+  rmse(truth = BodyTemp, .pred)
+
+train_rmse2 #The value is 1.21.
+
+#Now we repeat this on the test data.
+#We use RMSE on BodyTemp against Runnt nose and use the test data.
+#Make predictions.
+
+predict(cont_fit2, test_data)
+
+#Returns predicted class probabiliies
+cont_aug_test2 <- augment(cont_fit2, test_data)
+cont_aug_test2
+
+#RMSE
+test_rmse2 <- cont_aug_test2 %>%
+  rmse(truth = BodyTemp, .pred)
+
+test_rmse2 #The value is 1.13.
+
+#******************************************************************************************
+#****************************************Exercise 10***************************************
+#******************************************************************************************
+
+#Main outcome: continuous, numerical value of body temperature
+
+#Splitting and resampling data
+#*****************************
+
+#Fix the random numbers by setting a seed
+#this enables the analysis to be reproducible when random #s are used
+set.seed(123)
+
+#The rates of bodytemp are somewhat unbalanced
+processed_data %>%
+  count(BodyTemp) %>%
+  mutate(prop = n/sum(n))
+
+#Split the dataset into 70% training, 30% testing
+#Despite imbalance we noticed in bodytemp, 
+  #stratified split ensures that training and test data sets will keep roughly the same proportions of bodytemp
+data_split <- initial_split(processed_data, prop = 0.7, strata = BodyTemp)
+
+#Create data frames for the two sets
+train_data <- training(data_split)
+test_data <- testing(data_split)
+
+#We want to do 5-fold cross-validation, 5 times repeated
+#For the CV folds, we also want to stratify on BodyTemp
+
+#V-fold cross-validation (vfold_cv) randomly splits the data into V groups of roughly equal size (called "folds")
+resample_object <- vfold_cv(train_data, v = 5, repeats = 5, strata = BodyTemp)
+
+#Create a recipe for the data and fitting
+#****************************************
+
+#Code the categorical variables as dummy variables using step_dummy 
+  #and pick all nominal predictors
+
+#Continuous outcome of interest = BodyTemp
+#Step_dummy creates a set of binary dummy variables from a factor variable
+processed_cont_rec <- recipe(BodyTemp ~ ., data = train_data) %>%
+  step_dummy(all_nominal_predictors())
+
+class(processed_cont_rec$template$Weakness)
+tidy(processed_cont_rec)
+
+#Null model performance
+#**********************
+
+
+#Fit a tree, a LASSO model, and a random forest
+#For the tree, see the Tune model parameters section of the Get Started tutorial. 
+#For LASSO and the random forest, check out the Case Study section of the Get Started tutorial.
+#Packages to fit these 3 models: rpart, glmnet and ranger 
+
+#The steps (block of code) you should have here are 
+      #1) model specification, 
+      #2) workflow definition, 
+      #3) tune grid specification, and 
+      #4) tuning using cross-validation and the tune_grid function.
+
+#******************************************************************************
+#**********************************Tree Model**********************************
+#******************************************************************************
+
+#Decision tree models are prone to overfitting
+#Tuning the hyperparameters cost_complexity and maximum tree_depth can improve model performance
+#Tuning cost_complexity prunes the tree by ading a cost/penalty to error rates of more complex trees
+#Low cost decreases the number of tree nodes pruned -> overfitting
+#High cost increases the number of tree nodes pruned -> underfitting
+#Tuning tree_depth stops our tree from growing after it reaches a certain depth
+
+#Model specification:
+tune_spec <- decision_tree(
+    cost_complexity = tune(),
+    tree_depth = tune()) %>%
+  set_engine("rpart") %>%
+  set_mode("regression")
+
+tune_spec
+
+#Tune grid specification:
+#grid_regular() from the dials package chooses sensible values to try for each hyperparameter
+#grid filled with 25 candidate decision tree models 
+tree_grid <-
+  grid_regular(cost_complexity(),
+               tree_depth(),
+               levels = 5)
+
+tree_grid
+
+#Workflow definition
+#Use tune_grid() to fit models at all the different values we chose for each hyperparameter
+tree_wf <- workflow() %>%
+  add_model(tune_spec) %>%
+  add_recipe(processed_cont_rec)
+
+tree_res <- tree_wf %>%
+  tune_grid(
+    resamples = resample_object,
+    grid = tree_grid
+  )
+
+#Can these warnings be ignored? 
+#"A correlation computation is required, but "estimate" is constant nd has 0 standard deviation, resulting in a divide by 0"
+tree_res %>%
+  collect_metrics
+
+tree_res %>% 
+  autoplot()
+
+tree_res %>%
+  show_best("rmse") 
+
+#Pul out the single set of hyperparameter values for our best decision tree model
+best_tree <- select_best(tree_res)
+
+#These are the values for tree_depth and cost_complexity that maximize accuracy
+best_tree
+
+#Update our workflow with the values from select_best()
+best_tree_wf <- tree_wf %>%
+  finalize_workflow(best_tree)
+
+best_tree_wf
+
+#Fit final model to training data and evaluates finalized model on the testing data
+best_tree_fit <- best_tree_wf %>%
+  last_fit(data_split)
+
+best_tree_fit %>%
+  collect_metrics() #RMSE = 1.19
+
+#Plot residuals
+#!!!!!!!!!!!!!!
+
+#Plot the tree
+best_tree_fit %>%
+  extract_fit_engine() %>%
+  rpart.plot(roundint = FALSE)
+
+#What variables are important in this model?
+best_tree_fit %>%
+  extract_fit_parsnip() %>%
+  vip() #Sneeze_yes, runnynose_yes, nasal_congestion_yes,
+        #weakness_3, headache_yes, itchyeye_yes
+
+#*******************************************************************************
+#**********************************Lasso Model**********************************
+#*******************************************************************************
+
+#LASSO is a penalization method for less relevant preictors
+#Model specification:
+tune_spec_lasso <- linear_reg(penalty = tune(),
+  mixture = 1) %>% #glmnet model will potentially remove irrelevant predictors and choose a simpler model
+  set_engine("glmnet") #fits glm models via penalized maximum likelihood
+
+tune_spec_lasso
+
+#Workflow
+lasso_workflow <-
+  workflow() %>%
+  add_model(tune_spec_lasso) %>%
+  add_recipe(processed_cont_rec)
+
+#Tuning grid
+lasso_grid <- tibble(penalty = 10^seq(-4,-1,length.out = 30)) #30 candidate values
+lasso_grid %>% top_n(-5) #lowest penalty values
+lasso_grid %>% top_n(5) #highest penalty values
+
+lasso_res <-
+  lasso_workflow %>%
+  tune_grid(resample_object,
+            grid = lasso_grid,
+            control = 
+              control_grid(save_pred = TRUE),
+            metrics = 
+              metric_set(rmse))
+
+top_models <- lasso_res %>%
+  show_best("rmse", n = 15) %>%
+  arrange(penalty)
+
+top_models
+
+#Models 11-13 have best rmse value (1.15) 
+#I would choose model 13 to get the same model performance with fewer irrelevant predictors
+
+#Plot how the # of predictors included in the LASSO model changes with the tuning parameter: 
+#!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+#Extract the model from your final fit with x <- best_lasso_fit$fit$fit$fit and then plot(x, "lambda")
+#!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+#*******************************************************************************
+#********************************Random Forest Model****************************
+#*******************************************************************************
+
+#A random forest is an ensemble model typically made up of 1000s of decision trees
+
+cores <- parallel::detectCores()
+cores #4
+
+rf_mod <- rand_forest(mtry = tune(), min_n = tune(), trees = 1000) %>%
+  set_engine("ranger", num.threads = cores) %>%
+  set_mode("regression")
+
+rf_mod %>%
+  parameters() #mtry: sets the # of predictor variables that each node in the decision tree "sees" and can learn about
+               #min_n: sets the minimum n to split at any node
+
+rf_workflow <-
+  workflow() %>%
+  add_model(rf_mod) %>%
+  add_recipe(processed_cont_rec)
+
+set.seed(345)
+rf_res <-
+  rf_workflow %>%
+  tune_grid(resample_object,
+            grid = 25, #25 candidate models
+            control = 
+              control_grid(save_pred = TRUE),
+            metrics = 
+              metric_set(rmse))
+
+rf_res %>% 
+  show_best(metric = "rmse") #best rmse is 1.16
+
+autoplot(rf_res) #plots the results of the tuning process
+#Number of randomly selected predictors should be small (< 10) and minimal node size should be large (>30) to minimize rmse
+
+rf_best <-
+  rf_res %>%
+  select_best(metric = "rmse")
+
+rf_best #mtry = 5, min_n = 34
+
+
+#Plot the most important variables: 
+#x <- best_rf_fit$fit$fit$fit and then use the vip() function from the vip package
+#!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+#********************************************************************************
+#**********************************Model Selection*******************************
+#********************************************************************************
+
+#Now, you should for each model have a "best" one based on the tuning process
+  #Each best model gives you performance, uncertainty around the performance measure, and some diagnostic plots
+  #In the future, you'd want to look at the uncertainty in predictions, too
+  #Pick 1 of the 3 models and justify
+
+#********************************************************************************
+#**********************************Final Evaluation******************************
+#********************************************************************************
+
+#Once you pick your final model, you are allowed to once (and only once) fit it to the test data using the last_fit() funciton
+#Report performance and diagnostic plots
+
+#Main analysis Rmd file should produce HTML page
